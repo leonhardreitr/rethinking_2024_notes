@@ -1,0 +1,531 @@
+---
+title: "Chapter 4"
+subtitle: "Geocentric Models"
+format: 
+  html: 
+    theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)        # ggplot, dplyr, and friends
+library(parameters)       # Show model results as nice tables
+library(brms)             # interface to Stan
+library(tidybayes)        # Manipulate Stan results in tidy ways
+library(ggdist)           # Fancy distribution plots
+library(patchwork)        # Combine ggplot plots
+library(rcartocolor)      # Color palettes from CARTOColors 
+library(rstan)
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+# Custom ggplot theme which i stole from https://www.andrewheiss.com/blog/2023/08/12/conjoint-multilevel-multinomial-guide/#part-1-candy-single-question-basic-multinomial-logit
+
+theme_nice <- function() {
+  theme_minimal(base_family = "Clear Sans") +
+    theme(panel.grid.minor = element_blank(),
+          plot.title = element_text(family = "Clear Sans", face = "bold"),
+          axis.title.x = element_text(hjust = 0),
+          axis.title.y = element_text(hjust = 1),
+          strip.text = element_text(family = "Clear Sans", face = "bold",
+                                    size = rel(0.75), hjust = 0),
+          plot.title.position = "plot",
+          strip.background = element_rect(fill = "grey90", color = NA))
+}
+
+theme_set(theme_nice())
+
+clrs <- carto_pal(name = "Prism")
+```
+
+
+Linear regression as a baseline thing to learn.
+gaussian
+
+Everything that adds together fluctu<ation will sooner or later become gaussian.
+Does not have to be purely additive
+
+```{r}
+pos <- replicate(1000, sum(runif(16,-1,1)))
+hist(pos)
+rethinking::dens(pos)
+```
+
+$$
+W \sim Binomial(N,p) \\
+p \sim Uniform(0,1)
+$$
+
+## time to model
+
+```{r}
+data(Howell1,package = "rethinking")
+d <- Howell1
+
+glimpse(d)
+
+p1 <- 
+d |> 
+  ggplot(aes(x = weight, y = height)) +
+  geom_point(col = clrs[9]) +
+  geom_smooth(method = "loess", se = F, col = clrs[3]) +
+  labs(x = "Weight",
+       y = "Height",
+       title = "Relationship between weight and height \nfor the whole data",
+       subtitle = "Clearly non-linear")
+
+d_2 <- d |> filter(age >= 18)
+
+p2 <- 
+  d_2 |> 
+  ggplot(aes(x = weight, y = height)) +
+  geom_smooth(method = "lm", se = F, col = clrs[3]) +
+  geom_point(col = clrs[1]) +
+  labs(x = "Weight",
+       y = "Height",
+       title = "Relationship between weight and height \nfor adults",
+       subtitle = "More linear")
+
+p1 + p2
+
+ggplot(d_2, mapping = aes(height)) +
+  geom_density() +
+  labs(title = "Yeah, looks gaussian to me")
+```
+
+$$
+h_i \sim N(\mu, \sigma) \\
+\mu \sim N(178,20) \\
+\sigma \sim Uniform(0,50)
+$$
+plot those priors
+
+```{r}
+p1 <- 
+tibble(x = seq(100, 250, length.out = 1000))  |> 
+  mutate(y = dnorm(x, mean = 178, sd = 20)) |> 
+# Plotting
+ggplot(aes(x = x, y = y)) +
+  geom_line() +
+  labs(title = bquote("Prior for " ~ mu),
+       x = expression(mu),
+       y = "Density") 
+p2 <- 
+tibble(x = seq(-10, 60, length.out = 1000))  |> 
+  mutate(y = dunif(x,0,50)) |> 
+# Plotting
+ggplot(aes(x = x, y = y)) +
+  geom_line() +
+  labs(title = bquote("Prior for " ~ sigma),
+       x = expression(sigma),
+       y = "Density") 
+p1 + p2
+```
+
+Prior predictive check:
+
+```{r}
+p3 <- 
+tibble(
+  mu = rnorm(1e4,178,20),
+  sigma = runif(1e4,0,50),
+  prior = rnorm(1e4,mu, sigma)
+) |> 
+  ggplot(aes(prior)) +
+  geom_density(col = "darkorange4") +
+  labs(x = NULL, y = NULL, title = "h ~ dnorm(mu, sigma)")
+
+p4 <- 
+tibble(
+  mu = rnorm(1e4,178,100),
+  sigma = runif(1e4,0,50),
+  prior = rnorm(1e4,mu, sigma)
+) |> 
+  ggplot(aes(prior)) +
+  geom_density(col = "darkorange4") +
+  geom_vline(xintercept = 0,lty = "dashed") +
+  geom_vline(xintercept = 272, alpha = .9) +
+  scale_x_continuous(breaks = c(-128,0,178,484)) +
+  labs(x = NULL, y = NULL, title = "h ~ dnorm(mu, sigma)\nmu ~ dnorm(178,100)")
+
+(p1 + p2) / (p3 + p4)
+```
+
+```{r}
+b1 <- brm(
+  data = d_2,
+  family = gaussian,
+  height ~ 1,
+  prior = c(prior(normal(178, 20), class = Intercept),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4,
+      seed = 4)
+
+b1 |> 
+  spread_draws(b_Intercept, sigma) |> 
+  median_qi(.width = .89) |> 
+  select(b_Intercept, sigma, .width) |> 
+  knitr::kable(digits = 3)
+
+b2 <- brm(
+  data = d_2,
+  family = gaussian,
+  height ~ 1,
+  prior = c(prior(normal(178, .1), class = Intercept),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4,
+      seed = 4)
+
+b2 |> 
+  spread_draws(b_Intercept, sigma) |> 
+  median_qi(.width = .89) |> 
+  select(b_Intercept, sigma, .width) |> 
+  knitr::kable(digits = 2)
+
+b2 |> 
+  spread_draws(b_Intercept, sigma) %>%
+  median_qi(condition_mean = b_Intercept + sigma, .width = c(.95)) %>%
+  ggplot(aes(x = condition_mean)) +
+  stat_halfeye()
+```
+
+## Linear Prediction
+
+
+
+```{r}
+d_2 <- d_2 |> 
+  mutate(weight_c = weight - mean(weight))
+
+b3 <- brm(
+  data = d_2,
+  family = gaussian,
+      height ~ 1 + weight_c,
+      prior = c(prior(normal(178, 20), class = Intercept),
+                prior(lognormal(0, 1), class = b),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4,
+      seed = 4)
+```
+
+```{r}
+plot(b3)
+
+model_parameters(b3,
+                 ci = .89)
+
+pairs(b3)
+
+labels <-
+  c(-10, 0, 10) + mean(d_2$weight) |> 
+  round(digits = 0)
+
+d_2 |> 
+  ggplot(aes(weight_c, height)) +
+  geom_abline(intercept = fixef(b3)[1], 
+              slope     = fixef(b3)[2],
+              col = "firebrick", size = .5) +
+  geom_point(shape = 1, size = 2, color = "royalblue") +
+  scale_x_continuous("weight",
+                     breaks = c(-10, 0, 10),
+                     labels = labels) +
+  labs(title = "Our cute little model",
+       x = "Weight (centred)",
+       y = "Height")
+```
+
+## 4.5 Curves from lines
+
+```{r}
+d <- Howell1
+
+p1 <- 
+d |> 
+  mutate(weight_s = (weight - mean(weight))/sd(weight)) |> 
+  ggplot(aes(x = weight_s, y = height)) +
+  geom_smooth(formula = y ~ x, se = T, col = clrs[5], method = "lm",
+              fill = "grey83") +
+  geom_point(shape = 1, size = 3, alpha = 1/3,
+             col = "navy") +
+  labs(y = "Height",
+       subtitle = "Linear")
+```
+
+Polynomial regression: Variablen hoch irgendwas setzen und als weiteren Prädiktor verwenden
+
+$$
+\mu_i = \alpha + \beta_1x_i + \beta_2x_i^2
+$$
+$$
+h_i \sim N(\mu_i,\sigma) \\
+\mu_i = \alpha + \beta_1x_i + \beta_2x_i^2 \\
+\alpha \sim N(178,20) \\
+\beta_1 \sim LogNormal(0,1) \\
+\beta_2 \sim N(0,1) \\
+\sigma \sim U(0,50)
+$$
+
+
+```{r}
+d <- 
+  d |> 
+  mutate(weight_s = (weight - mean(weight))/sd(weight),
+         weight_s2 = weight_s^2)
+
+b5 <- brm(
+  data = d,
+  family = gaussian,
+  height ~ 1 + weight_s + weight_s2,
+  prior = c(prior(normal(178, 20), class = Intercept),
+                prior(lognormal(0, 1), class = b, coef = "weight_s"),
+                prior(normal(0, 1), class = b,coef = "weight_s2"),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4,
+      seed = 4)
+
+parameters::model_parameters(b5)
+
+weight_seq <- 
+  tibble(weight_s = seq(from = -2.5, to = 2.5, length.out = 29 + 1)) |> 
+  mutate(weight_s2 = weight_s^2)
+
+fit <- 
+  fitted(b5,
+         newdata = weight_seq) |> 
+  data.frame() |> 
+  bind_cols(weight_seq)
+
+pred <- predict(b5,
+         newdata = weight_seq) |> 
+  data.frame() |> 
+  bind_cols(weight_seq)
+
+p2 <-
+  ggplot(data = d, 
+         aes(x = weight_s)) +
+  geom_ribbon(data = pred, 
+              aes(ymin = Q2.5, ymax = Q97.5),
+              fill = "grey83") +
+  geom_smooth(data = fit,
+              aes(y = Estimate, ymin = Q2.5, ymax = Q97.5),
+              stat = "identity",
+              fill = "grey70", color = "black", alpha = 1, linewidth = 1/2) +
+  geom_point(aes(y = height),
+             color = "navy", shape = 1, size = 3, alpha = 1/3) +
+  labs(subtitle = "Quadratic",
+       y = "Height") +
+  coord_cartesian(xlim = range(d$weight_s),
+                  ylim = range(d$height))
+
+p2 
+```
+
+
+$$
+h_i \sim N(\mu_i,\sigma) \\
+\mu_i = \alpha + \beta_1x_i + \beta_2x_i^2 + \beta_3x_i^3\\
+\alpha \sim N(178,20) \\
+\beta_1 \sim LogNormal(0,1) \\
+\beta_2 \sim N(0,1) \\
+\beta_3 \sim N(0,1) \\
+\sigma \sim U(0,50)
+$$
+
+```{r}
+d <- 
+  d |> 
+  mutate(weight_s3 = weight_s^3)
+
+
+b6 <- brm(
+  data = d,
+  family = gaussian,
+  height ~ 1 + weight_s + weight_s2 + weight_s3,
+  prior = c(prior(normal(178, 20), class = Intercept),
+                prior(lognormal(0, 1), class = b, coef = "weight_s"),
+                prior(normal(0, 1), class = b,coef = "weight_s2"),
+                prior(normal(0, 1), class = b,coef = "weight_s3"),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4,
+      seed = 4)
+
+parameters::model_parameters(b6)
+
+weight_seq <- 
+  weight_seq |> 
+  mutate(weight_s3 = weight_s^3)
+
+fit <- 
+  fitted(b6,
+         newdata = weight_seq) |> 
+  data.frame() |> 
+  bind_cols(weight_seq)
+
+pred <- predict(b6,
+         newdata = weight_seq) |> 
+  data.frame() |> 
+  bind_cols(weight_seq)
+
+p3 <-
+  ggplot(data = d, 
+         aes(x = weight_s)) +
+  geom_ribbon(data = pred, 
+              aes(ymin = Q2.5, ymax = Q97.5),
+              fill = "grey83") +
+  geom_smooth(data = fit,
+              aes(y = Estimate, ymin = Q2.5, ymax = Q97.5),
+              stat = "identity",
+              fill = "grey70", color = "black", alpha = 1, linewidth = 1/2) +
+  geom_point(aes(y = height),
+             color = "navy", shape = 1, size = 3, alpha = 1/3) +
+  labs(subtitle = "Kubic",
+       y = "Height") +
+  coord_cartesian(xlim = range(d$weight_s),
+                  ylim = range(d$height))
+
+(p1 + p2 + p3) 
+
+b4 <- 
+brm(data = d, 
+      family = gaussian,
+      height ~ 1 + weight_s,
+      prior = c(prior(normal(178, 20), class = Intercept),
+                prior(lognormal(0, 1), class = b, coef = "weight_s"),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4)
+
+performance::compare_performance(b4,b5,b6)
+```
+
+### splines
+
+yeah no idea how to do this with brms
+
+```{r}
+data(cherry_blossoms, package = "rethinking")
+d <- cherry_blossoms
+rethinking::precis(d)
+
+d |> 
+  ggplot(aes(year,doy)) +
+  geom_point(shape = 1, alpha = .3) +
+  geom_hline(yintercept = 100, lty = "dashed") +
+  geom_smooth(se = F)
+
+d2 <- d[complete.cases(d$doy),]
+
+num_knots <- 15
+
+knots_list <- quantile(d2$year,probs = seq(0,1,length.out = num_knots))
+
+library(splines)
+B <- bs(d2$year,
+        knots = knots_list[-c(1,num_knots)],
+        degree = 3, intercept = T)
+
+plot(NULL, xlim = range(d2$year),
+     ylim = c(0,1),
+     xlab = "Year",
+     ylab = "Basis")
+for (i in 1:ncol(B)) lines(d2$year, B[,i])
+
+ms <-  rethinking::quap(
+alist(
+D ~ dnorm( mu , sigma ) ,
+mu <- a + B %*% w ,
+a ~ dnorm(100,10),
+w ~ dnorm(0,10),
+sigma ~ dexp(1)
+), data=list( D=d2$doy , B=B ) ,
+start=list( w=rep( 0 , ncol(B) ) ) )
+post <- rethinking::extract.samples(ms)
+
+w <- apply(post$w, 2, mean)
+
+plot(
+  NULL,
+  xlim = range(d2$year),
+  ylim = c(-6,6),
+  xlab = "Year",
+  ylab = "Basis * Weight"
+)
+
+for (i in ncol(B)) {
+  lines(d2$year, w[i]*B[,i])
+}
+
+mu <- link( ms )
+mu_PI <- apply(mu,2,PI,0.97)
+plot( d2$year , d2$doy , col=col.alpha(rangi2,0.3) , pch=16 )
+shade( mu_PI , d2$year , col=col.alpha("black",0.5) )
+```
+
+# Exercise
+
+## 4E1
+The first line is the likelihood
+
+## 4E2
+Two, $\mu$ and $\sigma$
+
+## 4E3
+
+$$
+Pr(\mu,\sigma|y) = \frac{Pr(y|\mu,\sigma)Pr(\mu)Pr(\sigma)}{\int\int Pr(y|\mu,\sigma)Pr(\mu)Pr(\sigma)d\mu d\sigma}
+$$
+
+## 4E4
+
+The second line
+
+## 4E5
+
+3, \alpha, \beta, \sigma
+
+## 4M1
+
+```{r}
+tibble(
+       n = 1e4,
+       mu = rnorm(n,0,10),
+       sigma = rexp(n,1))  |> 
+  mutate(y = rnorm(n, mu,sigma)) |> 
+# Plotting
+ggplot(aes(y)) +
+  geom_density() +
+  labs(title = bquote("Prior for"),
+       x = expression(mu),
+       y = "Density") 
+```
+
+## 4M2
+```{r}
+#| eval: false
+brm(data = d,
+    family = gaussian,
+    formula = y ~ 1,
+    prior = c(prior(normal(0, 10), class = Intercept),
+              prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4)
+```
+
+## 4M3
+
+y ~ dnorm( mu , sigma ),
+mu <- a + b*x,
+a ~ dnorm( 0 , 10 ),
+b ~ dunif( 0 , 1 ),
+sigma ~ dexp( 1 )
+
+
+$$
+y_i \sim N(\mu,\sigma) \\
+\mu_i = \alpha + \beta x_i \\
+\alpha \sim N(0,10) \\
+\beta \sim Uniform(0,1) \\
+\sigma \sim Exponential (1)
+$$
+
+## 4M4

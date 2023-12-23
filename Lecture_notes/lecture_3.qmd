@@ -1,0 +1,344 @@
+---
+title: "Lecture 3 - Geocentric Models"
+author: "Leonhard Reiter"
+format:
+  html:
+    theme: cosmo
+    code-fold: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: set up
+#| warning: false
+#| message: false
+
+library(rethinking)
+library(tidyverse)
+library(ggdag)
+library(brms)
+library(patchwork)
+options(brms.backend = "cmdstanr")
+
+theme_set(
+  theme_linedraw() +
+  theme(panel.grid = element_blank(),
+    plot.title.position = "plot"
+  ))
+```
+
+# Linear Regression
+
+**Geocentric**: Describes associations, makes predicitons, but is almost always mechanistically wrong
+
+**Gaussian**: Normal yes, abstracts away from generative error models, super general
+
+# Gaussian Distributions
+
+## Why normal?
+
+**Generative**: Sums fluctuations
+
+**Inferential**: Maximal entropy for estimation of mean and variance
+
+A variable does not need to be normal to be used in a Gaussian model, it is just a machine for estimating the mean and variance
+
+# Analysis Example
+
+```{r}
+#| message: false
+data("Howell1")
+
+p1 <- 
+Howell1 |> 
+  ggplot(aes(x = height, y = weight)) +
+  geom_point(shape = "o", size = 7, col = "red3", alpha = .5) +
+  geom_smooth(method = "loess", se = F, col = "grey25", lty = "dashed") +
+  geom_smooth(method = "lm", se = F, col = "black") +
+  labs(
+    x = "Height (cm)",
+    y = "Weight (kg)",
+    title = "Total sample",
+    subtitle = "Note the non-linear trend"
+  )
+
+d <- Howell1 |> 
+  filter(age >= 18)
+
+p2 <- 
+d |> 
+  ggplot(aes(x = height, y = weight)) +
+  geom_point(shape = "o", size = 7, col = "red3", alpha = .5) +
+  geom_smooth(method = "loess", se = F, col = "grey25", lty = "dashed") +
+  geom_smooth(method = "lm", se = F, col = "black") +
+  labs(
+    x = "Height (cm)",
+    y = "Weight (kg)",
+    title = "Adult sample")
+p1 + p2
+```
+
+Our question is:
+
+> How does height influence weight?
+
+We believe that height effects weight 
+$$
+H \rightarrow W \tag{Our DAG}
+$$ 
+
+$$
+W = f(H) \tag {Our Function}
+$$
+
+Of course there could also be unobserved things influencing the outcome
+
+```{r}
+coord <- list(
+  x = c(W = 2, H = 1, U = 3),
+  y = c(W = 0, H = 0, U = 0)
+)
+
+dagify(W ~ H,
+       W ~ U,
+  exposure = "H",
+  outcome = "W",
+  latent = "U",
+  coords = coord) |> 
+tidy_dagitty() |> 
+  mutate(colour = ifelse(name == "U", "Unobserved", "Observed")) |> 
+  ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_dag_point(aes(colour = colour)) +
+  geom_dag_edges() +
+  geom_dag_text() +
+  scale_color_manual(values = c("black", "darkred")) +
+  labs(title = "A DAG for our model") +
+  theme_dag() +
+  theme(legend.position = "none")
+```
+
+$$
+W = \beta H + U \tag{Generative Model}
+$$
+Generative code:
+
+```{r}
+# write function
+sim_h <- function(H,b, sd){
+  U <- rnorm(length(H), mean = 0, sd)
+  W <- b*H + U
+  return(W)
+}
+
+# plot
+d_sim <- 
+tibble(
+  H = runif(600, min = 130, max = 170),
+  W = sim_h(H,.5,5)
+) 
+
+d_sim |> 
+  ggplot(aes(H,W)) +
+  geom_point(
+    shape = 1,
+    size = 3,
+    col = "firebrick2"
+  )
+  
+```
+
+## Describing models
+
+List the variable and define each variable as a deterministic or distributional function of other variables
+
+$$
+W_i = \beta H + U_i \tag {Eq for expected Weight}
+$$
+
+$$
+U_i \sim Normal(0,\sigma) 
+$$
+
+$$
+H_i \sim Uniform(130,70)
+$$ \## Estimator
+
+$$
+E(W_i|H_i)= \alpha + \beta H_i
+$$
+
+## Posterior
+
+$$
+Pr(\alpha,\beta,\sigma|H_i,W_i) = \frac{Pr(W_i|H_i\alpha,\beta,\sigma)Pr(\alpha,\beta,\sigma)}{Z}
+$$
+
+$$
+W_i \sim Normal (\mu_i,\sigma) 
+$$
+
+$$
+\mu_i = \alpha + \beta H_i
+$$
+
+## quap 
+
+```{r}
+#| warning: false
+#| message: false
+#| cache: true
+
+m3.1 <- 
+  quap(
+    alist(
+      W ~ dnorm(mu,sigma),
+      mu <- alpha + beta * H,
+      alpha ~ dnorm(0,10),
+      beta ~ dunif(0,1),
+      sigma ~ dunif(0,10)
+    ), data = d_sim)
+
+b3.1 <- 
+  brm(
+    family = gaussian(),
+    data = d_sim,
+    W ~ H
+  )
+```
+
+```{r}
+precis(m3.1) |> t()
+bayestestR::describe_posterior(b3.1) |> 
+  knitr::kable(digits = 3)
+```
+
+
+## Prior predictve distribution
+
+```{r}
+#### first base R ----------------------------------------
+set.seed(1999)
+n <- 1e4 # define sample
+a <- rnorm(n,mean = 0, sd = 10) # define intercept
+b <- runif(n,0,1) # define slope
+
+plot(NULL,
+     xlim = c(130,170),
+     ylim = c(50,90),
+     xlab = "Height in cm",
+     ylab = "Weight in kg",
+     main = "looks wild yo")
+
+for (j in 1:50) {
+  abline(
+    a = a[j],
+    b = b[j],
+    lwd = 2,
+    col = rethink_cmyk[2]
+  )}
+
+#### now ggplot it ----------------------------------------
+n <- 1e4  # define sample
+a <- rnorm(n, mean = 0, sd = 10)  # define intercept
+b <- runif(n, 0, 1)  # define slope
+
+# Create a data frame with the intercepts and slopes
+df <- data.frame(a = a[1:50], b = b[1:50])
+
+# Plotting using ggplot2
+ggplot() +
+   geom_abline(aes(intercept = a, slope = b),
+               data = df, 
+               color = "#9c0101") +
+  xlim(c(130, 170)) +
+  ylim(c(50, 90)) +
+  labs(x = "Height in cm",
+       y = "Weight in kg",
+       title = "Looks wild yo") 
+```
+
+"What the model is actually thinking in it's little tortured mind" lmao
+
+## Time to validate it
+
+```{r}
+#| message: false
+#| warning: false
+#| cache: true
+
+# sim 10 people
+set.seed(93)
+n <- 10 # sample size
+H <- runif(n,130,170)
+W <- sim_h(H, .5, 5)
+
+
+#### quap --------------
+m3.1 <- 
+  quap(
+    alist(
+      W ~ dnorm(mu,sigma),
+      mu <- alpha + beta * H,
+      alpha ~ dnorm(0,10),
+      beta ~ dunif(0,1),
+      sigma ~ dunif(0,10)
+    ), data = list(W = W, H = H))
+
+precis(m3.1)
+```
+
+## Analyze some data
+
+```{r}
+#| cache: true
+#| warning: false
+#| message: false
+#| eval: false
+
+d <- Howell1 
+d2 <- 
+  d |> 
+  filter(age >= 18)
+dat <- list(W = d$weight, H = d$weight)
+
+d2 <-
+  d2 |> 
+  mutate(weight_c = weight - mean(weight))
+
+b4.3 <- 
+  brm(data = d2, 
+      family = gaussian,
+      height ~ 1 + weight_c,
+      prior = c(prior(normal(178, 20), class = Intercept),
+                prior(lognormal(0, 1), class = b),
+                prior(uniform(0, 50), class = sigma, ub = 50)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 99)
+
+labels <-
+  c(-10, 0, 10) + mean(d2$weight) |> 
+  round(digits = 0)
+
+d2 |> 
+  ggplot(aes(x = weight_c, y = height)) +
+  geom_abline(intercept = fixef(b4.3)[1], 
+              slope     = fixef(b4.3)[2]) +
+  geom_point(shape = 1, size = 4, color = "red") +
+  scale_x_continuous("weight",
+                     breaks = c(-10, 0, 10),
+                     labels = labels)
+
+post <- as_draws_df(b4.3)
+ggplot(data =  d2[1:352, ], 
+         aes(x = weight_c, y = height)) +
+  geom_abline(data = post |> slice(1:20),
+              aes(intercept = b_Intercept,
+                  slope = b_weight_c),
+              linewidth = .5, alpha = .3) +
+  geom_point(shape = 1, size = 3, color = "red") +
+  coord_cartesian(xlim = range(d2$weight_c),
+                  ylim = range(d2$height)) +
+  labs(title = "N = 352")
+```
+
