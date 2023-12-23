@@ -1,0 +1,52 @@
+---
+title: "Chapter 3"
+subtitle: "Sampling from the Imaginery"
+format: 
+  html: 
+    theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
+
+The goal in this chapter is to learn how to sample from the posterior so we can summarize, plot and most importanly understand our resul(s)
+
+```{r}
+library(tidyverse)        # ggplot, dplyr, and friends
+library(broom)            # Convert model objects to tidy data frames
+library(parameters)       # Show model results as nice tables
+library(scales)           # Nicer labeling functions
+library(brms)             # The best formula-based interface to Stan
+library(tidybayes)        # Manipulate Stan results in tidy ways
+library(ggdist)           # Fancy distribution plots
+library(patchwork)        # Combine ggplot plots
+library(rcartocolor)      # Color palettes from CARTOColors 
+
+# Custom ggplot theme which i stole from https://www.andrewheiss.com/blog/2023/08/12/conjoint-multilevel-multinomial-guide/#part-1-candy-single-question-basic-multinomial-logit
+
+theme_nice <- function() {
+  theme_minimal(base_family = "Clear Sans") +
+    theme(panel.grid.minor = element_blank(),
+          plot.title = element_text(family = "Clear Sans", face = "bold"),
+          axis.title.x = element_text(hjust = 0),
+          axis.title.y = element_text(hjust = 1),
+          strip.text = element_text(family = "Clear Sans", face = "bold",
+                                    size = rel(0.75), hjust = 0),
+          strip.background = element_rect(fill = "grey90", color = NA))
+}
+
+theme_set(theme_nice())
+
+clrs <- carto_pal(name = "Prism")
+
+# Functions for formatting things as percentage points
+label_pp <- label_number(accuracy = 1, scale = 100, 
+                         suffix = " pp.", style_negative = "minus")
+```
+
+```{r}
+d #<- 
+  tibble(
+    p_grid = seq(from = 0, to = 1, length.out = 1000)
+  )
+```
+

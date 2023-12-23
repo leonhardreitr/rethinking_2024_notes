@@ -1,0 +1,186 @@
+---
+title: "Categories and Curves"
+author: "Leonhard Reiter"
+format:
+  html:
+    theme: cosmo
+    code-fold: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(brms)
+library(ggthemes)
+library(tidybayes)
+library(rstan)
+
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+theme_set(theme_gray() + theme_fivethirtyeight())
+
+data("Howell1", package = "rethinking")
+```
+
+```{r}
+Howell1 |> 
+  filter(age >= 18) |> 
+  ggplot(aes(x = height, y = weight)) +
+  geom_point(shape = "O", size = 5, aes(col = as.character(male))) +
+  scale_y_continuous(breaks = seq(30,60,5)) +
+ scale_color_manual(name = "Gender", 
+                    labels = c("Male", "Female"),
+                    values = c("firebrick", "steelblue")) +
+  labs(x = "Height in cm", y = "Weight in kg", title = "Adult height, weight and sex")
+
+library(ggdag)
+
+dag <- dagify(
+  W ~ H + S,
+  H ~ S, outcome = "W",exposure = c("H","S"),
+  coords = list(
+  x = c(W = 3, H = 2, S = 2),
+  y = c(W = 1, H = 1, S = 0)))
+
+ggdag(dag) + theme_dag() + theme(plot.background = element_rect(fill = "snow"))
+
+d <- 
+Howell1 |> 
+  filter(age >= 18) |>
+  mutate(gender = ifelse(male == 1, "Male", "Female"))
+                     
+
+d |> 
+  ggplot(aes(x = height, fill = gender)) +
+  geom_density(alpha = .3, col = "black") + 
+  scale_color_manual(
+    name = "Gender",
+    values = c("tomato", "steelblue")
+  )
+```
+
+$$
+H = f_H(S) \\
+W = F_W(H,S)
+$$
+
+```{r}
+sim_hw <- function(S,b,a){
+  N <- length(S)  # define sample size
+  H <- ifelse(S == 1,150,160) + rnorm(N, 0, 5)
+  W <- a[S] + b[S]*H + rnorm(N, 0, 5)
+  data.frame(S,H,W)
+}
+
+S <- rethinking::rbern(n = 100) + 1
+dat <- sim_hw(S, b = c(0.5,.6), a = c(0,0))
+head(dat)
+
+dat |> 
+  mutate(Gender = if_else(S == 1, "Female", "Male")) |> 
+  ggplot(aes(x = H, y = W)) +
+  geom_point(aes(color = Gender), alpha = .8) +
+  geom_smooth(method = "lm", se = F, col = "black", lty = "dashed") +
+  geom_smooth(aes(color = Gender), method = "lm", se = F) + 
+  scale_color_manual(values = c("darkgreen","darkred")) +
+  theme_cowplot() +
+  theme(
+        plot.background = element_rect(fill = "grey92"))
+```
+
+
+$$
+W_I \sim Normal(\mu_i,\sigma) \\
+\mu = \alpha_{s[i]} 
+$$
+
+$$
+\alpha = [\alpha_1,\alpha_2]
+\tag{Proirs} \\
+\alpha_j \sim Normal(60,10)
+$$
+
+```{r}
+S <- rep(1,100)
+sim_f <- sim_hw(S,b = c(0.5,.6), a = c(0,0))
+
+S <- rep(2,100)
+sim_m <- sim_hw(S,b = c(0.5,.6), a = c(0,0))
+
+mean(sim_m$W - sim_f$W)
+```
+
+```{r}
+set.seed(99)
+S <- rethinking::rbern(100) + 1
+dat <- sim_hw(S,b = c(0.5,.6), a = c(0,0)) |> 
+  mutate(S = if_else(S == 1, "Female", "Male"))
+  
+
+
+
+b4_1 <- brm(
+  data = dat,
+  family = gaussian(),
+  W ~ 1 + S,
+  prior = c(prior(normal(60, 10), class = Intercept),
+                prior(uniform(0, 10), class = sigma, ub = 10)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 99)
+summary(b4_1)
+
+get_variables(b4_1)
+
+b4_1 |> 
+  spread_draws(b_Intercept, b_SMale, sigma) |> 
+  median_qi(b_Intercept, b_S, sigma) |> 
+  select(b_Intercept, b_S, sigma)
+
+r4_1 <- rethinking::quap(
+  alist(
+    W ~ dnorm(mu,sigma),
+    mu <- a[S],
+    a[S] ~ dnorm(60,10),
+    sigma ~ dunif(0,10)
+  ), data = dat
+)
+
+rethinking::precis(r4_1,depth = 2)
+rethinking::precis(r4_1,depth = 2)[2,1] - rethinking::precis(r4_1,depth = 2)[1,1]
+```
+
+# Some real analysis
+
+```{r}
+d <- d |> 
+  mutate(gender = as.factor(gender))
+
+b4_2 <- brm(
+  data = d,
+  family = gaussian(),
+  weight ~ 1 + gender,
+  prior = c(prior(normal(60, 10), class = Intercept),
+                prior(uniform(0, 10), class = sigma, ub = 10)),
+      iter = 2000, warmup = 1000,
+      seed = 99)
+
+bayestestR::describe_posterior(b4_2) |> knitr::kable(format = "html")
+
+r4_2 <- 
+rethinking::quap(
+   alist(
+    weight ~ dnorm(mu,sigma),
+    mu <- a[male],
+    a[male] ~ dnorm(60,10),
+    sigma ~ dunif(0,10)
+  ), data = d
+)
+
+post <- rethinking::extract.samples(r4_2)
+
+```
+
