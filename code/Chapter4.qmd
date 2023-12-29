@@ -461,3 +461,71 @@ plot( d2$year , d2$doy , col=col.alpha(rangi2,0.3) , pch=16 )
 shade( mu_PI , d2$year , col=col.alpha("black",0.5) )
 ```
 
+# Exercise
+
+## 4E1
+The first line is the likelihood
+
+## 4E2
+Two, $\mu$ and $\sigma$
+
+## 4E3
+
+$$
+Pr(\mu,\sigma|y) = \frac{Pr(y|\mu,\sigma)Pr(\mu)Pr(\sigma)}{\int\int Pr(y|\mu,\sigma)Pr(\mu)Pr(\sigma)d\mu d\sigma}
+$$
+
+## 4E4
+
+The second line
+
+## 4E5
+
+3, \alpha, \beta, \sigma
+
+## 4M1
+
+```{r}
+tibble(
+       n = 1e4,
+       mu = rnorm(n,0,10),
+       sigma = rexp(n,1))  |> 
+  mutate(y = rnorm(n, mu,sigma)) |> 
+# Plotting
+ggplot(aes(y)) +
+  geom_density() +
+  labs(title = bquote("Prior for"),
+       x = expression(mu),
+       y = "Density") 
+```
+
+## 4M2
+```{r}
+#| eval: false
+brm(data = d,
+    family = gaussian,
+    formula = y ~ 1,
+    prior = c(prior(normal(0, 10), class = Intercept),
+              prior(exponential(1), class = sigma)),
+      iter = 2000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4)
+```
+
+## 4M3
+
+y ~ dnorm( mu , sigma ),
+mu <- a + b*x,
+a ~ dnorm( 0 , 10 ),
+b ~ dunif( 0 , 1 ),
+sigma ~ dexp( 1 )
+
+
+$$
+y_i \sim N(\mu,\sigma) \\
+\mu_i = \alpha + \beta x_i \\
+\alpha \sim N(0,10) \\
+\beta \sim Uniform(0,1) \\
+\sigma \sim Exponential (1)
+$$
+
+## 4M4
