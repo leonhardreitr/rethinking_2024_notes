@@ -1,0 +1,9 @@
+---
+title: "Chapter 2"
+subtitle: "Small Worlds and Large Worlds"
+format: 
+  html: 
+    theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
