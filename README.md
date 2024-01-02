@@ -1,2 +1,6 @@
-# rethinking_2024_notes
-My stuff for Richards McElreath's 2024 edition of "Statistical Rethinking"
+Statistical Rethinking (2024 Edition)
+===============
+
+Instructor: Richard McElreath
+
+Dude who dumps his code here: Lenni

@@ -1,0 +1,11 @@
+---
+title: "Chapter 1"
+subtitle: "The Golem of Prague"
+format: 
+  html: 
+    theme: cosmo
+editor_options: 
+  chunk_output_type: console
+---
+
+no code here just vibes
